@@ -1,0 +1,223 @@
+# HomeWork 2 
+## Submission for ISYE 6501
+
+### Question 3.1.a
+Using the same data set (credit_card_data.txt or credit_card_data-headers.txt) as in Question 2.2, use the ksvm or kknn function to find a good classifier: (a) using cross-validation (do this for the k-nearest-neighbors model; SVM is optional);
+
+### Answer
+Lets import some libraries, load the data and have a look inside.
+```{r}
+# Import the dataset
+library(kernlab)
+library(kknn)
+library(lattice)
+library(ggplot2)
+library(caret)
+library(e1071)
+
+#Import the dataset into a table
+rm(list = ls())
+
+data <- read.table("credit_card_data.txt", stringsAsFactors = FALSE, header = FALSE)
+
+head(data)
+
+```
+We need to fit the model to the last column V11, and the other variables are predictors.
+First we are going to use train.kknn to perform a leave one out cross validation.
+```{r}
+#setting a random seed so the results are reproducable 
+set.seed(1)
+kmax = 10
+model_loocv <- train.kknn(V11~.,data, kmax = 10, scale =TRUE)
+
+# the model results can be saved in an array
+accuracy <- rep(0,10)
+
+for (k in 1:10) {
+    predicted <- as.integer(fitted(model_loocv)[[k]][1:nrow(data)] + 0.5) 
+    # round off to 0 or 1
+    accuracy[k] <- sum(predicted == data$V11)
+}
+
+percent_accuracy <- (accuracy/nrow(data))
+percent_accuracy
+```
+Lets try to do cross validation with the caret package. This time we will use SVM.
+```{r}
+#fitted(model_loocv)[[12]][12:nrow(data)]
+TrainCtrl1 <- trainControl(method = "repeatedcv", number = 5, repeats=5, verbose = FALSE)
+modelSvmRRB <- train(as.factor(V11) ~ V1 + V2 + V3 + V4 + V5 + V6 + V7 + V8 + V9 +V10,   # model to fit
+                     data = data,                        
+                     trControl = TrainCtrl1,      # folds
+                     method = "svmRadial") 
+modelSvmRRB
+```
+### Question 3.1.b
+Splitting the data into training, validation, and test data sets (pick either KNN or SVM; the other is optional).
+
+### Answer
+We will randomly split data into train, test and validation group using an 80-10-10 ratio. 
+```{r}
+
+set.seed(1)
+
+# mask provides the row indices of randomly sampled rows 
+# we can use mask to create the taining dataset
+mask_train = sample(nrow(data), size = floor(nrow(data) * 0.8))
+data_train = data[mask_train,] # training data set
+#data_train = data[1:392,]
+
+remaining = data[-mask_train, ]
+mask_remain = sample(nrow(remaining), size = floor(nrow(remaining)*.5) )
+data_valid = remaining[mask_remain,]  # validation data set
+data_test = remaining[-mask_remain, ] # test data set
+#data_valid = data[393:523,]
+#data_test = data[523:654,]
+```
+We will run a loop to train the model and pick the best of 9 SVM models.
+```{r}
+acc <- rep(0,9) # store accuracy of 6 models
+C_values = c(0.000000001 ,0.000001, 0.0001, 0.001, 0.01, 1, 10, 1000, 1500,  100000)
+
+for (i in 1:9){
+  model_svm <- ksvm(as.matrix(data_train[,1:10]),
+                    as.factor(data_train[,11]),
+                    type = "C-svc",
+                    kernel = 'rbfdot',
+                    C = C_values[i],
+                    scaled = TRUE)
+  pred = predict(model_svm,data_valid[,1:10])
+  acc[i] = sum(pred==data_valid$V11)/nrow(data_valid)
+}
+acc
+```
+The 6th model with lambda 1 gave us the best accuracy .
+```{r}
+cat("The best SVM model has a C value of ",C_values[which.max(acc[1:9])]," and best validation accuracy of ",max(acc[1:9]))
+```
+Now to actually test the model on previously unseen data.
+```{r}
+model_svm_test <- ksvm(as.matrix(data_train[,1:10]),
+                    as.factor(data_train[,11]),
+                    type = "C-svc",
+                    kernel = 'rbfdot',
+                    C = C_values[which.max(acc[1:9])],
+                    scaled = TRUE)
+pred_test = predict(model_svm,data_test[,1:10])
+acc_test = sum(pred_test==data_test$V11)/nrow(data_test)
+acc_test
+```
+We get a decent accuray over the test data of 81%.
+
+### Question 4.1  
+Describe a situation or problem from your job, everyday life, current events, etc., for which a clustering model would be appropriate. List some (up to 5) predictors that you might use. 
+
+### Answer
+I work for an insurance distributer, at any given point of time we have over 10 to 15 insurance packages available to our clients. It would be nice if we could recommend packages based on our customers needs. We could use clustering to group our clients into dierent classes and suggest packages based on their class.  
+ 
+### Question 4.2
+Use the R function kmeans to cluster the points as well as possible. Report the best combination of predictors, your suggested value of k, and how well your best clustering predicts flower type. 
+
+### Answer
+Load and view the data iris dataset.
+```{r}
+require(datasets)
+data(iris)
+summary(iris)
+```
+
+```{r}
+head(iris)
+```
+Lets create a few innitial exploratory plots
+```{r}
+ggplot(iris,aes(x = Sepal.Length, y = Sepal.Width, col= Species)) + geom_point()
+```
+```{r}
+ggplot(iris,aes(x = Petal.Length, y = Petal.Width, col= Species)) + geom_point()
+```
+```{r}
+ggplot(iris,aes(x = Sepal.Width, y = Petal.Width, col= Species)) + geom_point()
+```
+
+Since petal length vs petal width give us the most distinct clusters, we will use them for our kmeans algorithum.
+Even though we already know the right number of K is 3, lets treat this as an unsupervised learning problem and try and deduce k from an elbow graph. We can also remove the Species column to make it a truly unsupervied problem, but we will skip that today.
+```{r}
+set.seed(200)
+wss <- data.frame(0)
+for (i in 1:10)
+{
+  wss[i]<- kmeans(iris[,3:4],nstart =20, centers=i)$tot.withinss
+}
+wss
+```
+```{r}
+plot(1:10,wss, type= "b", xlab = "Number of clusters(k)", ylab = "Within cluster sum of squares")
+```
+As predicted k=3 gives us the best results.
+```{r}
+library(cluster)
+library(HSAUR)
+result <- kmeans(iris[,3:4], nstart = 20, center= 3)
+dissE <- daisy(iris) 
+dE2   <- dissE^2
+sk2   <- silhouette(result$cl, dE2)
+plot(sk2)
+
+```
+
+
+The silhouette value is a measure of how similar an object is to its own cluster.The silhouette ranges from −1 to +1. As seen above out k means cluster does well with an average distance of .84.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
