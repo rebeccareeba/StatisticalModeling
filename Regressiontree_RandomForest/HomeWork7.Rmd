@@ -1,0 +1,302 @@
+---
+title: "HomeWork 6"
+output:
+  word_document: default
+  html_notebook: default
+---
+# HomeWork 7
+# ISYE 6501
+
+
+### Question 10.1 
+Using the same crime data set uscrime.txt as in Questions 8.2 and 9.1, find the best model you can using  (a) a regression tree model, and  (b) a random forest model.   In R, you can use the tree package or the rpart package, and the randomForest package.  For each model, describe one or two qualitative takeaways you get from analyzing the results (i.e., don’t just stop when you have a good model, but interpret it too) 
+ 
+
+```{r}
+library(kernlab)
+library(kknn)
+library(lattice)
+library(ggplot2)
+library(caret)# an aggregator package for performing many machine learning models
+library(randomForest)
+library(ranger)# a faster implementation of randomForest
+library(h2o)# an extremely fast java-based platform
+library(rpart)
+library(tree)
+library(corrplot) #graphical display of correlation matrix
+library(rsample)      # data splitting 
+```
+Next we will load the data and look at the data structure.
+```{r}
+rm(list=ls())
+uscrime <- read.table("uscrime.txt",stringsAsFactors = FALSE, header = TRUE)
+head(uscrime)
+```
+
+Lets examine the data for correlations using a visualisation. This will help us understand which features are most useful to us.
+```{r}
+#uscrime$So <- NULL
+#head(uscrime)
+cormatrix <- cor(uscrime) #calculate correlation matrix
+corrplot(cormatrix, method = "circle") #plot correlation matrix
+```
+The correlation plot may not be needed here but it gives us an idea for which features to look out for tree branching. For instance Po1/Po2(but not both) are very important for Crime.
+```{r}
+tree.uscrime <- tree(Crime~., data = uscrime)
+summary(tree.uscrime)
+
+```
+```{r}
+plot(tree.uscrime)
+text(tree.uscrime)
+title("USCRIME Classification Tree")
+
+```
+
+```{r}
+summary(tree.uscrime)
+```
+So we have created a tree with 7 leaves. But but we cant be certain if the tree above will give us the lowest error rate. Lets try doing some cross validation to see the number of splits we want.
+```{r}
+cv_fit = cv.tree(tree.uscrime)
+plot(cv_fit$size, cv_fit$dev, type = 'b')
+```
+This indicates that it's best to use the terminal nodes 2,6 or 7, as it has the least amount of error. Lets get the summary to decide using the Residual mean deviance for the three models.
+```{r}
+# Prune the tree with 5 nodes
+library(RColorBrewer)
+prune.tree6 <- prune.tree(tree.uscrime, best = 6)
+plot(prune.tree6)
+text(prune.tree6)
+title("Pruned Tree with 6 leaves")
+
+```
+```{r}
+summary(prune.tree6)
+```
+```{r}
+# Prune the tree with 3 nodes
+
+prune.tree3 <- prune.tree(tree.uscrime, best = 3)
+plot(prune.tree3)
+text(prune.tree3)
+title("Pruned Tree with 3 leaves")
+```
+
+```{r}
+summary(prune.tree3)
+```
+I actually ran the summary for all the models ranging from 2 nodes to 7. And the tree with the max node 7 had the least Residual mean deviance. Lets try to verify our observations by estimating our quality of fit using R2.
+I thought maybe using another tree model may yeild better results. I tried using rparts which gave a result with 4 nodes.
+
+```{r}
+# Regression Tree Example
+library(rpart)
+
+# grow tree
+fit <- rpart(Crime~.,
+   method="anova", data=uscrime)
+
+printcp(fit) # display the results
+plotcp(fit) # visualize cross-validation results
+#summary(fit) # detailed summary of splits
+```
+
+```{r}
+# create additional plots
+par(mfrow=c(1,2)) # two plots on one page
+rsq.rpart(fit) # visualize cross-validation results  
+```
+
+```{r}
+# plot tree
+plot(fit, uniform=TRUE,
+   main="Regression Tree for Mileage ")
+text(fit, use.n=TRUE, all=TRUE, cex=.8)
+```
+
+Comparing the R2 of all the above models. 
+```{r}
+
+# Calculate quality of fit for model with 7 nodes
+Tree7_predict <- predict(tree.uscrime, data = uscrime[,1:15])
+RSS7 <- sum((Tree7_predict - uscrime[,16])^2)
+TSS7 <- sum((uscrime[,16] - mean(uscrime[,16]))^2)
+R27 <- 1 - RSS7/TSS7
+#R27
+#prediction7 <- predict(tree.uscrime, test_point) # gives the probability for each class
+
+
+# Calculate quality of fit for model with 6 nodes
+Tree6_predict <- predict(prune.tree6, data = uscrime[,1:15])
+RSS6 <- sum((Tree6_predict - uscrime[,16])^2)
+TSS6 <- sum((uscrime[,16] - mean(uscrime[,16]))^2)
+R26 <- 1 - RSS6/TSS6
+#prediction6 <- predict(Tree6_predict, test_point) # gives the probability for each class
+
+
+# Calculate quality of fit for model with 4 nodes
+Tree4_predict <- predict(fit, data = uscrime[,1:15])
+RSS4 <- sum((Tree4_predict - uscrime[,16])^2)
+TSS4 <- sum((uscrime[,16] - mean(uscrime[,16]))^2)
+R24 <- 1 - RSS4/TSS4
+#prediction4 <- predict(Tree4_predict, test_point)
+
+# Calculate quality of fit for model with 3 nodes
+Tree3_predict <- predict(prune.tree3, data = uscrime[,1:15])
+RSS3 <- sum((Tree3_predict - uscrime[,16])^2)
+TSS3 <- sum((uscrime[,16] - mean(uscrime[,16]))^2)
+R23 <- 1 - RSS3/TSS3
+
+R2 <- c(R27, R26, R24,R23)
+Model <- c('7 nodes', '6 nodes', '4 nodes' , '3 nodes' )
+compData <- data.frame(Model, R2)
+compData
+
+```
+
+By far the model with 7 nodes has performed better than the other models with a higer R2 and lower Residual mean deviance. Which means the residual errors are not as spread out. And the model explains 72% of the variation in the response.
+Lets try using the model to predict on unseen data.
+```{r}
+# Create the test datapoint mannually ising the data.frame() function for the new city
+test_point <- data.frame(M = 14.0,So=0, Ed = 10.0 ,Po1 = 12.0 ,Po2 = 15.5,LF = 0.640 ,M.F = 94.0 ,Pop = 150 ,NW = 1.1 ,U1= 0.120 ,U2 = 3.6 ,Wealth = 3200,Ineq = 20.1,Prob = 0.04 ,Time = 39.0)
+
+prediction7 <- predict(tree.uscrime, test_point) # gives the probability for each class
+prediction7
+
+```
+
+### Random Forest
+This is a reasonable estimate for our unseen data. 
+Now lets try to create a random forest
+```{r}
+# for reproduciblity
+set.seed(678)
+
+# default RF model
+m1 <- randomForest(
+  formula = Crime~.,
+  data    = uscrime
+)
+
+plot(m1)
+# number of trees with lowest MSE
+which.min(m1$mse)
+
+
+# RMSE of this optimal random forest
+sqrt(m1$mse[which.min(m1$mse)])
+
+
+```
+Looks like we perform best at about 100 trees. Below we create a random forest model for ntree = 100. We also plot the important variables.
+
+```{r}
+# randomForest speed
+#system.time(
+#  uscrime_randomForest <- randomForest(
+#    formula = Crime~., 
+#    data    = uscrime, 
+#    ntree   = 100,
+#    mtry    = floor(length(features) / 3)
+#  )
+#)
+#varImpPlot (uscrime_randomForest)
+```
+```{r}
+#Run prediction to see estimated value for test data
+pred_randomForest <- predict(m1, test_point)
+pred_randomForest
+
+
+```
+### Question 10.2 
+Describe a situation or problem from your job, everyday life, current events, etc., for which a logistic regression model would be appropriate. List some (up to 5) predictors that you might use. 
+
+### Answer
+Recently my credit card was swiped at a gas station.Logistic regression can be used in Credit card scam detection. When a credit card transaction happens, the bank makes a note of several factors. For instance, the date of the transaction, amount, place, type of purchase, etc. Based on these factors, they develop a Logistic Regression model of whether or not the transaction is a fraud.
+For instance, if the card is used in the span of few hours in two diiferent countries the credit card gets flaged as fraud.
+
+### Question 10.3
+Using the GermanCredit data set germancredit.txt, use logistic regression to find a good predictive model for whether credit applicants are good credit risks or not.  Show your model (factors used and their coefficients), the software output, and the quality of fit.
+
+### Answer
+```{r}
+
+#reading the german credit data
+
+german <- read.table("germancredit.txt",sep=" ")
+german$V21[german$V21 == 1] <- 0
+german$V21[german$V21 == 2] <- 1
+head(german)
+```
+
+```{r}
+# training and test data sets, 80-20 split
+set.seed(1)
+
+m <- nrow(german)
+partition <- sample(1:m, size =round(m*0.7),replace=F)
+# training and test data sets
+train_credit <- german[partition,]
+test_credit <- german[-partition,]
+```
+
+```{r}
+
+reg <- glm(V21 ~ .,family=binomial(link = 'logit'), data =train_credit )
+
+
+train_control <- trainControl(method = "cv", number = 10)
+
+# train the model on training set
+model <- train(V21 ~ .,
+               data = train_credit,
+               trControl = train_control,
+               method = "glm",
+               family=binomial(link = 'logit'))
+summary(model)
+```
+```{r}
+# print cv scores
+coef(model$finalModel)
+
+```
+
+```{r}
+yhat_logit <- predict(reg, test_credit, type = "response")
+yhat1 <- as.integer(yhat_logit > 0.5)
+
+table(yhat1, test_credit$V21)
+```
+
+```{r}
+require(pROC)
+AUC <- roc(test_credit$V21, yhat1)
+plot(AUC, main = "ROC Curve")
+AUC
+```
+Since we have a lot of redundent features, we will create a new logistic regression model only using important features. And as approving a bad loan is 5 times worse than deniing a good loan, we will change out threshold value to .22.
+```{r}
+#Create logistic model important features
+reg_imp <- glm(V21~V1+V2+V3+V4+V8+V12+V13+V14+V20+V17+V7,family=binomial(link = 'logit'), data =train_credit )
+
+yhat_logit_imp <- predict(reg_imp, test_credit, type = "response")
+yhat1_imp <- as.integer(yhat_logit_imp > 0.22)
+
+table(yhat1_imp, test_credit$V21)
+```
+
+
+```{r}
+AUC_imp <- roc(test_credit$V21, yhat1_imp)
+plot(AUC_imp, main = "ROC Curve")
+AUC_imp
+```
+
+```{r}
+# print cv scores for final model
+coef(reg_imp)
+```
+
+Fortunately our new logistic model has a higer AUC of 0.6948 and has a much lower false positive vs false negative.
