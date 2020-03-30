@@ -1,0 +1,193 @@
+---
+title: "HomeWork 6"
+output:
+  word_document: default
+  html_notebook: default
+---
+# HomeWork 8
+# ISYE 6501
+
+
+### Question 11.1 
+Using the crime data set uscrime.txt from Questions 8.2, 9.1, and 10.1, build a regression model using: 
+1. Stepwise regression 
+2. Lasso 
+3. Elastic net 
+For Parts 2 and 3, remember to scale the data first – otherwise, the regression coefficients will be on different scales and the constraint won’t have the desired effect. 
+ 
+### Answer:
+```{r}
+library(kernlab)
+library(kknn)
+library(lattice)
+library(ggplot2)
+library(caret)# an aggregator package for performing many machine learning models
+library(ranger)# a faster implementation of randomForest
+library(h2o)# an extremely fast java-based platform
+library(corrplot) #graphical display of correlation matrix
+library(rsample)      # data splitting 
+library(MASS) #Stepwise and model selection using AIC
+library(glmnet)
+library(leaps)
+```
+Next we will load the data and look at the data structure.
+```{r}
+rm(list=ls())
+uscrime <- read.table("uscrime.txt",stringsAsFactors = FALSE, header = TRUE)
+head(uscrime)
+```
+
+Lets examine the data for correlations using a visualisation. This will help us understand which features are most useful to us.
+```{r}
+#uscrime$So <- NULL
+#head(uscrime)
+cormatrix <- cor(uscrime) #calculate correlation matrix
+corrplot(cormatrix, method = "circle") #plot correlation matrix
+```
+The correlation plot may not be needed here but it gives us an idea for which features to look out for tree branching. For instance Po1/Po2(but not both) are very important for Crime.
+
+Scale the data. Except So as it is binary.
+```{r}
+colNames <- colnames(uscrime[,-2])[1:14]
+
+normalize <- function(df, cols) {
+  result <- df # make a copy of the input data frame
+
+  for (j in cols) { # each specified col
+    m <- mean(df[,j]) # column mean
+    std <- sd(df[,j]) # column (sample) sd
+
+    result[,j] <- sapply(result[,j], function(x) (x - m) / std)
+  }
+  return(result)
+}
+
+#normalize predictors except 'So'
+datanorm <- normalize(uscrime, colNames)
+
+head(datanorm)
+```
+Stepwise regression assumes that the predictor variables are not highly correlated. As shown above there is no major correlation except for between Po1 and Po2. During each step in stepwise regression, a variable is considered for addition to or subtraction from the set of predictor variables based on some pre-specified criterion (e.g. adjusted R-squared). The two main approaches involve forward selection, starting with no variables in the model, and backwards selection, starting with all candidate predictors.
+```{r}
+#Basic Stepwise Regression
+
+# Fit the full model 
+full.model <- lm(Crime ~., data = uscrime)
+# Stepwise regression model
+# stepAIC(), which choose the best model by AIC.
+step.model <- stepAIC(full.model, direction = "both",trace = FALSE)
+summary(step.model)
+```
+The above result is an out of the box stepwise regression selecting the best model using AIC. Develop a new model with the eight variables found with stepwise regression.
+```{r}
+mod_Step8 = lm(Crime ~ M.F+U1+Prob+U2+M+Ed+Ineq+Po1, data = datanorm)
+
+```
+Lets try our cross validation with stepwise regression to see if we can get a better model.
+
+The function starts by searching different best models of different size, up to the best 10-variables model. The number of features to be added is specified by nvmax. We specify stepwise selection by "leapSeq".
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+# Set up repeated k-fold cross-validation
+train.control <- trainControl(method = "cv", number = 10)
+# Train the model
+step.model <- train(Crime ~., data = datanorm,
+                    method = "leapSeq", 
+                    tuneGrid = data.frame(nvmax = 4:10),
+                    trControl = train.control
+                    )
+step.model$results
+
+#Summary of best model from cross validation
+#summary(step.model$finalModel)
+```
+
+From above, it can be seen that the model with 6 variables (nvmax = 6) is the one that has the lowest RMSE and high R squared. 
+The regression coefficients of the final model (id = 4) can be accessed as follow.
+```{r}
+coef(step.model$finalModel, 6)
+```
+ Develop a new model with the six variables found with cross validation with stepwise regression.
+```{r}
+mod_Step6 = lm(Crime ~ M+Prob+U2+Ed+Ineq+Po1, data = datanorm)
+summary(mod_Step6)
+
+```
+Since the previous AIC model with 8 features has a higer adjusted R squared of 0.7444, we will select that as our final model.
+```{r}
+coef(mod_Step8)
+```
+
+## LASSO Regression
+Prepare the data for use in lasso regression.
+```{r}
+# Dumy code categorical predictor variables
+x=data.matrix(datanorm[,-16])
+y=data.matrix(datanorm$Crime)
+
+library(glmnet)
+set.seed(123)
+cv.lasso <- cv.glmnet(x, y, alpha = 1)
+plot(cv.lasso)
+```
+
+The plot displays the cross-validation error according to the log of lambda. The left dashed vertical line indicates that the log of the optimal value of lambda is approximately 3, which is the one that minimizes the prediction error. This lambda value will give the most accurate model. The exact value of lambda can be viewed as follow:
+
+```{r}
+cv.lasso$lambda.min
+```
+Using lambda.min as the best lambda, gives the following regression coefficients:
+```{r}
+coef(cv.lasso, cv.lasso$lambda.min)
+```
+
+Compute the final model using lambda.min:
+```{r}
+mod_lassomin = lm(Crime ~ M+So+Pop+NW+U1+U2+Wealth+Prob+M.F+Ed+Ineq+Po1, data = datanorm)
+summary(mod_lassomin)
+```
+The function cv.glmnet() finds also the value of lambda that gives the simplest model but also lies within one standard error of the optimal value of lambda. This value is called lambda.1se.
+```{r}
+cv.lasso$lambda.1se
+```
+Using lambda.1se as the best lambda, gives the following regression coefficients:
+```{r}
+coef(cv.lasso, cv.lasso$lambda.1se)
+```
+Compute the final model using features from lambda.1se:
+```{r}
+mod_lassolse = lm(Crime ~ M+Prob+M.F+Ed+Ineq+Po1, data = datanorm)
+summary(mod_lassolse)
+```
+Since the lambda.1se model has far fewer features, 6 compared to lambda.min having 12 features, and almost identical adj R squared, it is preferable to select the lse model as the final LASSO model.
+
+## Elastic Net
+
+We’ll test the combination of 10 different values for alpha and lambda. This is specified using the option tuneLength.
+
+The best alpha and lambda values are those values that minimize the cross-validation error.
+```{r}
+# Build the model using the training set
+set.seed(123)
+model_net <- train(Crime ~., data = datanorm, method = "glmnet",
+                trControl = trainControl("cv", number = 10),
+                tuneLength = 10)
+# Best tuning parameter
+model_net$bestTune
+```
+
+```{r}
+# Coefficient of the final model. You need
+# to specify the best lambda
+coef(model_net$finalModel, model_net$bestTune$lambda)
+```
+
+The Elastic Net selects 12 variables compared to 6 in Lasso and 8 in Step Wise. Next we compare how this new model performs compared to the Lasso and Step Wise models
+```{r}
+mod_Elastic_net = lm(Crime ~So+M+Ed+Po1+M.F+Pop+NW+U1+U2+Wealth+Ineq+Prob, data = datanorm)
+summary(mod_Elastic_net)
+```
+
+The R-SQuared value is similar using LASSO model with only 6 variables. Therefore the Elastic net may not be doing a good job as it selects 6 more variables for a similar RSquared value
+
