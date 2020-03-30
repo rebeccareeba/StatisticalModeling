@@ -1,0 +1,137 @@
+---
+title: "HomeWork 6"
+output:
+  word_document: default
+  html_notebook: default
+---
+# HomeWork 6
+# ISYE 6501
+
+
+### Question 9.1 
+Using the same crime data set uscrime.txt as in Question 8.2, apply Principal Component Analysis and then create a regression model using the first few principal components.  Specify your new model in terms of the original variables (not the principal components), and compare its quality to that of your solution to Question 8.2.  You can use the R function prcomp for PCA. (Note that to first scale the data, you can include scale. = TRUE to scale as part of the PCA function. Don’t forget that, to make a prediction for the new city, you’ll need to unscale the coefficients (i.e., do the scaling calculation in reverse)!) 
+ 
+
+```{r}
+library(kernlab)
+library(kknn)
+library(lattice)
+library(ggplot2)
+library(caret)
+library(e1071)
+library(outliers)
+library(dplyr)
+library(olsrr)
+library(leaps)
+```
+Next we will load the data and look at the data structure.
+```{r}
+rm(list=ls())
+uscrime <- read.table("uscrime.txt",stringsAsFactors = FALSE, header = TRUE)
+head(uscrime)
+```
+
+Lets examine the data for correlations using a visualisation.
+```{r}
+library (GGally)
+ggpairs(uscrime, columns = c("Po1","Po2","U1","Ineq"))
+```
+
+PCA is used when we have large number of features in the hundreds or thousands, and we cannot make a reasoable model with the limited number of data points we have. In the current data set PCA would be over kill and will probably lead to over fitting. PCA also has the added advantage of reducing correlation by giving higher priority to more relavent features.
+PCA doesnt perform well with binary features 
+```{r}
+uscrime$So <- NULL
+#head(uscrime)
+
+pca.out = prcomp(uscrime[,1:14],scale = TRUE) # prinicipal component analysis model
+pca.out$sdev   # gives standard deviations 
+variance <- pca.out$sdev^2 #  get back eigenvalues
+```
+```{r}
+summary(pca.out)
+
+```
+
+```{r}
+screeplot(pca.out)   # Scree plot shows variance explained per principal component
+```
+From the grapgh and the summary looks like the first 5 Principal components have conciderably higher variance. We will use these 4 PCs in our regression model.
+```{r}
+#Top 5 principal components
+pca1 <- pca.out$x[,1:5]
+#pca1
+
+```
+```{r}
+
+uscrimePC <- cbind(pca1, uscrime["Crime"])
+#head(uscrimePC)
+#Running a linear model
+modelPCA <- lm(Crime~.,data = as.data.frame(uscrimePC))
+summary(modelPCA)
+
+```
+In the above model our adjusted R square is abysmal. Lets do some feature selection on the Principal components. We will use ols_subset to Select the subset of predictors have the largest R2 value or the smallest mean squared error.
+```{r}
+#Get all principal components from pca output
+pc_full <- pca.out$x[,]
+head(pc_full)
+```
+
+Now that we have our PC values we need to reverse enginner to the coefficients to get the right features. 
+
+In order to get the scaled coefficients in original factures we need to multipy the coefficient vector to the rotation matrix of the PCA. TO unscale the coefficient matrix we need to divide by standard deviation.
+For the intersept we only divide by the PC intercept by the sum of the means.
+
+```{r}
+# Rotation vector for the first 5 PCs
+rotation_vec <- pca.out$rotation[,1:5]
+# Coefficients of PCA model without the Intercept
+PCA_coef <- modelPCA$coefficients[2:6]
+
+scaled_coef <- PCA_coef%*% t(rotation_vec)
+scaled_coef
+```
+
+Now to get original coefficients and intercepts
+```{r}
+intercept <- modelPCA$coefficients[1]-sum(scaled_coef*sapply(uscrime[,1:14],mean)/pca.out$scale) #sum(sapply(uscrime[,1:15],mean))
+intercept
+
+unscaled_coef <- scaled_coef/pca.out$scale
+unscaled_coef
+```
+
+```{r}
+matrix_data <- as.matrix(uscrime[,1:14])
+
+# estimate is of the form estimate = aX +b
+# where a are the coefficients and b is the intercept
+estimates <- matrix_data %*% t(unscaled_coef) + intercept
+SSE = sum((estimates - uscrime[,15])^2)
+SStot = sum((uscrime[,15] - mean(uscrime[,15]))^2)
+R2 <- 1 - SSE/SStot
+R2
+```
+```{r}
+# Create the test datapoint mannually ising the data.frame() function for the new city
+test_point <- data.frame(M = 14.0,Ed = 10.0 ,Po1 = 12.0 ,Po2 = 15.5,LF = 0.640 ,M.F = 94.0 ,Pop = 150 ,NW = 1.1 ,U1= 0.120 ,U2 = 3.6 ,Wealth = 3200,Ineq = 20.1,Prob = 0.04 ,Time = 39.0)
+
+# Use the intercepts and coefficiets to make a prediction of Cirme in the new city
+matrix_test <- as.matrix(test_point)
+prediction = matrix_test %*% t(unscaled_coef) + intercept
+prediction
+```
+###As we already know the crime for the new city from the previous Homework, out model is overestimating. As mentioned earlier PCA is ideally suited for large number of data points. With our 50 data points the model is over fitting. Compared to my previous model from 8.2 which gave a value of 728, this model is less accurate. The final prediction for test city using PCA is 1443 with an R-square of 0.629.
+
+```{r}
+#Sanity check to see if our reverse PCA calculation was correct
+#project new data onto PCA space and run model
+
+pca_test <- scale(test_point, pca.out$center, pca.out$scale) %*% pca.out$rotation 
+pca_test <- as.data.frame(pca_test)
+pca_test
+#pca_test <- data.frame(PC1 = 1.161658,PC2 = -2.841351 ,PC3 = 0.5694485 ,PC4 = -1.04263,PC5 = -1.166522 ,PC6 = -2.191452 ,PC7 = -0.4660637 ,PC8 = 0.9344984 ,PC9= 0.227878 ,PC10 = 0.555688 ,PC11 = -1.088542,PC12 = 3.504094,PC13 = 0.6951131 ,PC14 = 1.269102)
+predict(modelPCA,newdata=pca_test,type="response")
+```
+We get the same response by projecting the data onto the PCA axis.
