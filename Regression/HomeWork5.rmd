@@ -1,0 +1,79 @@
+---
+title: "HomeWork 6"
+output:
+  word_document: default
+  html_notebook: default
+---
+# HomeWork 6
+# ISYE 6501
+
+
+### Question 9.1 
+Using the same crime data set uscrime.txt as in Question 8.2, apply Principal Component Analysis and then create a regression model using the first few principal components.  Specify your new model in terms of the original variables (not the principal components), and compare its quality to that of your solution to Question 8.2.  You can use the R function prcomp for PCA. (Note that to first scale the data, you can include scale. = TRUE to scale as part of the PCA function. Don’t forget that, to make a prediction for the new city, you’ll need to unscale the coefficients (i.e., do the scaling calculation in reverse)!) 
+ 
+
+```{r}
+library(kernlab)
+library(kknn)
+library(lattice)
+library(ggplot2)
+library(caret)
+library(e1071)
+library(outliers)
+library(dplyr)
+library(olsrr)
+library(leaps)
+```
+Next we will load the data and look at the data structure.
+```{r}
+rm(list=ls())
+uscrime <- read.table("uscrime.txt",stringsAsFactors = FALSE, header = TRUE)
+head(uscrime)
+```
+
+Lets examine the data for correlations using a visualisation.
+```{r}
+library (GGally)
+ggpairs(uscrime, columns = c("Po1","Po2","U1","Ineq"))
+```
+
+PCA is used when we have large number of features in the hundreds or thousands, and we cannot make a reasoable model with the limited number of data points we have. In the current data set PCA would be over kill and will probably lead to over fitting. PCA also has the added advantage of reducing correlation by giving higher priority to more relavent features.
+PCA doesnt perform well with binary features 
+```{r}
+uscrime$So <- NULL
+#head(uscrime)
+#```
+#```{r}
+
+pca.out = prcomp(uscrime[,1:14],center=TRUE, scale = TRUE) # prinicipal component analysis model
+pca.out$sdev   # gives standard deviations 
+variance <- pca.out$sdev^2 #  get back eigenvalues
+```
+```{r}
+summary(pca.out)
+
+```
+
+```{r}
+screeplot(pca.out)   # Scree plot shows variance explained per principal component
+```
+From the grapgh and the summary looks like the first 4 Principal components have conciderably higher variance. We will use these 4 PCs in our regression model.
+```{r}
+#Top 4 principal components
+pca <- pca.out$x[,1:4]
+pca
+
+```
+```{r}
+uscrimePC <- cbind(pca, uscrime["Crime"])
+#head(uscrimePC)
+modelPCA <- lm(Crime~.,data = as.data.frame(uscrimePC))
+summary(modelPCA)
+
+```
+In the above model our adjusted R square is abysmal. Lets do some feature selection on the Principal components. We will use ols_subset to Select the subset of predictors have the largest R2 value or the smallest mean squared error.
+```{r}
+olsmodel<-lm(Crime~.,data = uscrimePC)
+ols_step_best_subset(olsmodel)
+
+```
